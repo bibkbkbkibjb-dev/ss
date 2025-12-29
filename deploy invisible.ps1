@@ -64,9 +64,10 @@ try {
         # Trigger 1: Run immediately when User Logs on
         $Trigger1 = New-ScheduledTaskTrigger -AtLogon
         
-        # Trigger 2: Run every 15 Minutes (Indefinitely)
+        # Trigger 2: Run every 15 Minutes (For 20 Years)
+        # FIX: We use 7300 days instead of MaxValue to avoid the "Out of Range" crash.
         $Trigger2 = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 15)
-        $Trigger2.Repetition.Duration = [TimeSpan]::MaxValue
+        $Trigger2.Repetition.Duration = [TimeSpan]::FromDays(7300)
         
         # Principal: Run with Highest Privileges (Admin/System rights if avail)
         $Principal = New-ScheduledTaskPrincipal -GroupId "BUILTIN\Users" -RunLevel Highest
